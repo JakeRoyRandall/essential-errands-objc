@@ -7,6 +7,8 @@ printf '[{"id":"bread","name":"buy bread","minutes":5,"deadline":8},{"id":"mail"
 awk -F '\t' 'NR==2&&$1=="mail"&&$4==3&&$5==0{ok++} NR==3&&$1=="tea"&&$4==5&&$5==1{ok++} NR==4&&$1=="bread"&&$4==10&&$5==2{ok++} END{exit ok!=3}' "$tmp/out"
 for bad in '[{"id":"x","name":"x","minutes":-1,"deadline":1}]' '[{"id":"x","name":"x","minutes":1,"deadline":1},{"id":"x","name":"y","minutes":1,"deadline":2}]' '{"id":"x"}' '[{"id":"x","name":"x","minutes":"1","deadline":1}]'; do if printf '%s' "$bad" | /tmp/essential-errands - >/dev/null 2>&1; then exit 1; fi; done
 same=$(printf '[{"id":"a","name":"a","minutes":1,"deadline":5},{"id":"b","name":"b","minutes":2,"deadline":5}]' | /tmp/essential-errands -); test "$(printf '%s\n' "$same" | sed -n '2p' | cut -f1)" = a; test "$(printf '%s\n' "$same" | sed -n '3p' | cut -f1)" = b
+from=$(printf '[{"id":"early","name":"early","minutes":1,"deadline":1},{"id":"late","name":"late","minutes":1,"deadline":99}]' | /tmp/essential-errands --from late -); test "$(printf '%s\n' "$from" | sed -n '2p' | cut -f1)" = late; test "$(printf '%s\n' "$from" | sed -n '3p' | cut -f1)" = early
+if printf '[{"id":"a","name":"a","minutes":1,"deadline":1}]' | /tmp/essential-errands --from missing - >/dev/null 2>&1; then exit 1; fi
 printf '[{"id":"a","name":"a","minutes":2,"deadline":9},{"id":"b","name":"b","minutes":0,"deadline":9},{"id":"c","name":"c","minutes":1,"deadline":9}]' >"$tmp/file.json"
 /tmp/essential-errands --start 5 --break-after 2 --break-for 4 "$tmp/file.json" >"$tmp/options"
 test "$(sed -n '2p' "$tmp/options" | cut -f1-5)" = 'a	a	5	7	0'
