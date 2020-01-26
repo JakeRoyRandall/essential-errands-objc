@@ -9,6 +9,10 @@ for bad in '[{"id":"x","name":"x","minutes":-1,"deadline":1}]' '[{"id":"x","name
 same=$(printf '[{"id":"a","name":"a","minutes":1,"deadline":5},{"id":"b","name":"b","minutes":2,"deadline":5}]' | /tmp/essential-errands -); test "$(printf '%s\n' "$same" | sed -n '2p' | cut -f1)" = a; test "$(printf '%s\n' "$same" | sed -n '3p' | cut -f1)" = b
 from=$(printf '[{"id":"early","name":"early","minutes":1,"deadline":1},{"id":"late","name":"late","minutes":1,"deadline":99}]' | /tmp/essential-errands --from late -); test "$(printf '%s\n' "$from" | sed -n '2p' | cut -f1)" = late; test "$(printf '%s\n' "$from" | sed -n '3p' | cut -f1)" = early
 if printf '[{"id":"a","name":"a","minutes":1,"deadline":1}]' | /tmp/essential-errands --from missing - >/dev/null 2>&1; then exit 1; fi
+released=$(printf '[{"id":"late","name":"late","minutes":1,"deadline":2,"release":5},{"id":"now","name":"now","minutes":1,"deadline":99}]' | /tmp/essential-errands -); test "$(printf '%s\n' "$released" | sed -n '2p' | cut -f1)" = now; test "$(printf '%s\n' "$released" | sed -n '3p' | cut -f1)" = IDLE; test "$(printf '%s\n' "$released" | sed -n '4p' | cut -f1)" = late
+from_release=$(printf '[{"id":"early","name":"early","minutes":1,"deadline":1},{"id":"future","name":"future","minutes":1,"deadline":99,"release":7}]' | /tmp/essential-errands --from future -); test "$(printf '%s\n' "$from_release" | sed -n '2p' | cut -f1)" = IDLE; test "$(printf '%s\n' "$from_release" | sed -n '3p' | cut -f1)" = future; test "$(printf '%s\n' "$from_release" | sed -n '4p' | cut -f1)" = early
+interplay=$(printf '[{"id":"a","name":"a","minutes":1,"deadline":9,"release":3},{"id":"b","name":"b","minutes":1,"deadline":9}]' | /tmp/essential-errands --from a --break-after 1 --break-for 2 -); test "$(printf '%s\n' "$interplay" | sed -n '2p' | cut -f1)" = IDLE; test "$(printf '%s\n' "$interplay" | sed -n '3p' | cut -f1)" = a; test "$(printf '%s\n' "$interplay" | sed -n '4p' | cut -f1)" = BREAK; test "$(printf '%s\n' "$interplay" | sed -n '5p' | cut -f1)" = b
+for bad_release in '[{"id":"x","name":"x","minutes":1,"deadline":1,"release":-1}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"release":1000001}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"release":"2"}]'; do if printf '%s' "$bad_release" | /tmp/essential-errands - >/dev/null 2>&1; then exit 1; fi; done
 printf '[{"id":"a","name":"a","minutes":2,"deadline":9},{"id":"b","name":"b","minutes":0,"deadline":9},{"id":"c","name":"c","minutes":1,"deadline":9}]' >"$tmp/file.json"
 /tmp/essential-errands --start 5 --break-after 2 --break-for 4 "$tmp/file.json" >"$tmp/options"
 test "$(sed -n '2p' "$tmp/options" | cut -f1-5)" = 'a	a	5	7	0'
@@ -26,6 +30,21 @@ r=json.loads(os.environ['JSON_RESULT'])
 assert r['schema_version']==1 and len(r['events'])==1
 assert r['events'][0]['id']=='é' and r['events'][0]['name']=='café-run'
 assert r['total_service']==2 and r['finish']==2 and r['max_lateness']==0
+PY
+json=$(printf '[{"id":"late","name":"late","minutes":1,"deadline":9,"release":4},{"id":"now","name":"now","minutes":1,"deadline":99}]' | /tmp/essential-errands --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert [e['kind'] for e in r['events']]==['errand','idle','errand']
+assert r['events'][1]['start']==1 and r['events'][1]['finish']==4
+assert r['events'][2]['release']==4
+assert r['finish']-r['start']==r['total_service']+r['total_break_time']+r['total_idle_time']
+PY
+json=$(printf '[{"id":"early","name":"early","minutes":1,"deadline":1},{"id":"future","name":"future","minutes":1,"deadline":99,"release":7}]' | /tmp/essential-errands --from future --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert [e['kind'] for e in r['events']]==['idle','errand','errand']
+assert r['events'][0]['start']==0 and r['events'][0]['finish']==7
+assert r['finish']-r['start']==r['total_service']+r['total_break_time']+r['total_idle_time']
 PY
 json=$(printf '[]' | /tmp/essential-errands --json -); JSON_RESULT="$json" python3 -c 'import json,os; r=json.loads(os.environ["JSON_RESULT"]); assert r["events"]==[] and r["finish"]==0'
 if printf '[]' | /tmp/essential-errands --json --break-after 1 - >/dev/null 2>&1; then exit 1; fi
