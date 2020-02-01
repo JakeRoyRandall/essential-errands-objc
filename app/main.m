@@ -28,12 +28,17 @@ static NSData *ReadInput(NSString *path) {
 }
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        NSString *inputPath = @"-", *startingID = nil; BOOL hasInput = NO, jsonOutput = NO, hasUntil = NO; long long startOffset = 0, breakAfter = 0, breakFor = 0, until = 0; BOOL hasBreakAfter = NO, hasBreakFor = NO;
+        NSString *inputPath = @"-", *startingID = nil; NSMutableArray *skipIDs = [NSMutableArray array]; BOOL hasInput = NO, jsonOutput = NO, hasUntil = NO; long long startOffset = 0, breakAfter = 0, breakFor = 0, until = 0; BOOL hasBreakAfter = NO, hasBreakFor = NO;
         for (int i = 1; i < argc; i++) { NSString *arg = [NSString stringWithUTF8String:argv[i]];
             if ([arg isEqualToString:@"--from"]) {
                 if (++i >= argc) Fail(@"--from requires an errand id");
                 startingID = [NSString stringWithUTF8String:argv[i]];
                 if (startingID.length == 0) Fail(@"--from requires an errand id");
+            } else if ([arg isEqualToString:@"--skip"]) {
+                if (++i >= argc) Fail(@"--skip requires an errand id"); NSString *skipID = [NSString stringWithUTF8String:argv[i]];
+                if (skipID.length == 0) Fail(@"--skip requires an errand id");
+                if (![skipIDs containsObject:skipID]) [skipIDs addObject:skipID];
+                if (skipIDs.count > 100) Fail(@"at most 100 skipped IDs are supported");
             } else if ([arg isEqualToString:@"--until"]) {
                 if (++i >= argc) Fail(@"--until requires an integer value"); NSString *value = [NSString stringWithUTF8String:argv[i]]; NSScanner *scanner = [NSScanner scannerWithString:value];
                 if (![scanner scanLongLong:&until] || !scanner.isAtEnd || until < 0 || until > 1000000) Fail(@"--until value is out of bounds"); hasUntil = YES;
@@ -57,6 +62,11 @@ int main(int argc, const char *argv[]) {
             if (![name isKindOfClass:[NSString class]] || name.length == 0 || name.length > 120 || [name rangeOfCharacterFromSet:[NSCharacterSet controlCharacterSet]].location != NSNotFound || !ValidInteger(raw[@"minutes"], &minutes) || !ValidInteger(raw[@"deadline"], &deadline) || (raw[@"release"] != nil && !ValidInteger(raw[@"release"], &release)) || (raw[@"priority"] != nil && (!ValidInteger(raw[@"priority"], &priority) || priority > 9))) Fail(@"name, minutes, deadline, release, and optional priority have invalid types or bounds");
             [ids addObject:taskID]; [tasks addObject:@{ @"id": taskID, @"name": name, @"minutes": @(minutes), @"deadline": @(deadline), @"release": @(release), @"priority": @(priority), @"order": @(order++) }];
         }
+        for (NSString *skipID in skipIDs) if (![ids containsObject:skipID]) Fail(@"--skip id was not found in input");
+        if (startingID && [skipIDs containsObject:startingID]) Fail(@"--from id cannot also be skipped");
+        NSMutableArray *skipped = [NSMutableArray array]; NSMutableArray *planned = [NSMutableArray array];
+        for (NSDictionary *task in tasks) { if ([skipIDs containsObject:task[@"id"]]) [skipped addObject:task[@"id"]]; else [planned addObject:task]; }
+        tasks = planned;
         [tasks sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { NSComparisonResult result = [a[@"deadline"] compare:b[@"deadline"]]; if (result != NSOrderedSame) return result; result = [b[@"priority"] compare:a[@"priority"]]; return result == NSOrderedSame ? [a[@"order"] compare:b[@"order"]] : result; }];
         if (startingID && [tasks indexOfObjectPassingTest:^BOOL(NSDictionary *task, NSUInteger idx, BOOL *stop) { return [task[@"id"] isEqualToString:startingID]; }] == NSNotFound) Fail(@"--from id was not found in input");
         if (hasUntil && startOffset > until) Fail(@"--start cannot be after --until");
@@ -88,8 +98,9 @@ int main(int argc, const char *argv[]) {
             long long release = [task[@"release"] longLongValue]; if (clock < release) { if (!jsonOutput) printf("IDLE\tidle\t%lld\t%lld\t0\n", clock, release); else [events addObject:@{ @"kind": @"idle", @"start": @(clock), @"finish": @(release), @"lateness": @0 }]; totalIdle += release - clock; clock = release; }
             long long start = clock; long long service = [task[@"minutes"] longLongValue]; clock += service; totalService += service; sinceBreak += service; long long finish = clock; long long late = MAX(0, finish - [task[@"deadline"] longLongValue]); maxLate = MAX(maxLate, late); if (!jsonOutput) printf("%s\t%s\t%lld\t%lld\t%lld\n", [task[@"id"] UTF8String], [task[@"name"] UTF8String], start, finish, late); else [events addObject:@{ @"kind": @"errand", @"id": task[@"id"], @"name": task[@"name"], @"release": @(release), @"priority": task[@"priority"], @"start": @(start), @"finish": @(finish), @"lateness": @(late) }]; firstStop = NO;
         }
+        if (!jsonOutput) for (NSString *taskID in skipped) printf("SKIPPED\t%s\n", taskID.UTF8String);
         if (!jsonOutput) for (NSString *taskID in deferred) printf("DEFERRED\t%s\n", taskID.UTF8String);
-        if (jsonOutput) { NSMutableDictionary *result = [@{ @"schema_version": @1, @"start": @(startOffset), @"events": events, @"total_service": @(totalService), @"total_break_time": @(totalBreak), @"total_idle_time": @(totalIdle), @"finish": @(clock), @"max_lateness": @(maxLate), @"deferred": deferred } mutableCopy]; if (hasUntil) result[@"until"] = @(until); NSError *jsonError = nil; NSData *output = [NSJSONSerialization dataWithJSONObject:result options:0 error:&jsonError]; if (!output || jsonError || fwrite(output.bytes, 1, output.length, stdout) != output.length || putchar('\n') == EOF) Fail(@"cannot write JSON output"); }
+        if (jsonOutput) { NSMutableDictionary *result = [@{ @"schema_version": @1, @"start": @(startOffset), @"events": events, @"total_service": @(totalService), @"total_break_time": @(totalBreak), @"total_idle_time": @(totalIdle), @"finish": @(clock), @"max_lateness": @(maxLate), @"skipped": skipped, @"deferred": deferred } mutableCopy]; if (hasUntil) result[@"until"] = @(until); NSError *jsonError = nil; NSData *output = [NSJSONSerialization dataWithJSONObject:result options:0 error:&jsonError]; if (!output || jsonError || fwrite(output.bytes, 1, output.length, stdout) != output.length || putchar('\n') == EOF) Fail(@"cannot write JSON output"); }
     }
     return 0;
 }

@@ -9,6 +9,9 @@ for bad in '[{"id":"x","name":"x","minutes":-1,"deadline":1}]' '[{"id":"x","name
 same=$(printf '[{"id":"a","name":"a","minutes":1,"deadline":5},{"id":"b","name":"b","minutes":2,"deadline":5}]' | /tmp/essential-errands -); test "$(printf '%s\n' "$same" | sed -n '2p' | cut -f1)" = a; test "$(printf '%s\n' "$same" | sed -n '3p' | cut -f1)" = b
 priority=$(printf '[{"id":"deadline","name":"deadline","minutes":1,"deadline":1,"priority":0},{"id":"high","name":"high","minutes":1,"deadline":2,"priority":9},{"id":"tie-low","name":"tie-low","minutes":1,"deadline":3,"priority":1},{"id":"tie-high","name":"tie-high","minutes":1,"deadline":3,"priority":2},{"id":"tie-equal","name":"tie-equal","minutes":1,"deadline":3,"priority":2}]' | /tmp/essential-errands -); test "$(printf '%s\n' "$priority" | sed -n '2p' | cut -f1)" = deadline; test "$(printf '%s\n' "$priority" | sed -n '3p' | cut -f1)" = high; test "$(printf '%s\n' "$priority" | sed -n '4p' | cut -f1)" = tie-high; test "$(printf '%s\n' "$priority" | sed -n '5p' | cut -f1)" = tie-equal; test "$(printf '%s\n' "$priority" | sed -n '6p' | cut -f1)" = tie-low
 for bad_priority in '[{"id":"x","name":"x","minutes":1,"deadline":1,"priority":-1}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"priority":10}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"priority":1.5}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"priority":true}]'; do if printf '%s' "$bad_priority" | /tmp/essential-errands - >/dev/null 2>&1; then exit 1; fi; done
+skipped=$(printf '[{"id":"early","name":"early","minutes":1,"deadline":1},{"id":"later","name":"later","minutes":1,"deadline":9},{"id":"last","name":"last","minutes":1,"deadline":10}]' | /tmp/essential-errands --skip early --skip later --skip later -); test "$(printf '%s\n' "$skipped" | sed -n '2p' | cut -f1)" = last; test "$(printf '%s\n' "$skipped" | sed -n '3p' | cut -f1)" = SKIPPED; test "$(printf '%s\n' "$skipped" | sed -n '4p' | cut -f1)" = SKIPPED; test "$(printf '%s\n' "$skipped" | grep -c '^IDLE\|^BREAK')" -eq 0
+if printf '[{"id":"x","name":"x","minutes":1,"deadline":1}]' | /tmp/essential-errands --skip missing - >/dev/null 2>&1; then exit 1; fi
+if printf '[{"id":"x","name":"x","minutes":1,"deadline":1}]' | /tmp/essential-errands --from x --skip x - >/dev/null 2>&1; then exit 1; fi
 from=$(printf '[{"id":"early","name":"early","minutes":1,"deadline":1},{"id":"late","name":"late","minutes":1,"deadline":99}]' | /tmp/essential-errands --from late -); test "$(printf '%s\n' "$from" | sed -n '2p' | cut -f1)" = late; test "$(printf '%s\n' "$from" | sed -n '3p' | cut -f1)" = early
 if printf '[{"id":"a","name":"a","minutes":1,"deadline":1}]' | /tmp/essential-errands --from missing - >/dev/null 2>&1; then exit 1; fi
 released=$(printf '[{"id":"late","name":"late","minutes":1,"deadline":2,"release":5},{"id":"now","name":"now","minutes":1,"deadline":99}]' | /tmp/essential-errands -); test "$(printf '%s\n' "$released" | sed -n '2p' | cut -f1)" = now; test "$(printf '%s\n' "$released" | sed -n '3p' | cut -f1)" = IDLE; test "$(printf '%s\n' "$released" | sed -n '4p' | cut -f1)" = late
@@ -42,6 +45,11 @@ json=$(printf '[{"id":"high","name":"high","minutes":1,"deadline":5,"priority":7
 import json, os
 r=json.loads(os.environ['JSON_RESULT'])
 assert r['events'][0]['priority']==7
+PY
+json=$(printf '[{"id":"skip","name":"skip","minutes":1,"deadline":1},{"id":"go","name":"go","minutes":1,"deadline":9}]' | /tmp/essential-errands --skip skip --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert r['skipped']==['skip'] and r['deferred']==[] and [e['id'] for e in r['events']]==['go']
 PY
 json=$(printf '[{"id":"late","name":"late","minutes":1,"deadline":9,"release":4},{"id":"now","name":"now","minutes":1,"deadline":99}]' | /tmp/essential-errands --json -); JSON_RESULT="$json" python3 - <<'PY'
 import json, os
