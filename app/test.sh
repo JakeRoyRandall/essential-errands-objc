@@ -109,4 +109,18 @@ r=json.loads(os.environ['JSON_RESULT'])
 assert r['scheduled_count']==r['deferred_count']==r['skipped_count']==0 and r['average_wait_after_release']==0.0
 PY
 if printf '[]' | /tmp/essential-errands --csv --stats - >/dev/null 2>&1; then exit 1; fi
+compare=$(printf '%s' '[{"id":"long","name":"long","minutes":5,"deadline":1},{"id":"short","name":"short","minutes":1,"deadline":9}]' | /tmp/essential-errands --compare -); test "$(printf '%s\n' "$compare" | sed -n '1p')" = 'COMPARE	metric	edf	shortest'; test "$(printf '%s\n' "$compare" | sed -n '6p')" = 'COMPARE	average_wait	2.5	0.5'
+json=$(printf '%s' '[{"id":"long","name":"long","minutes":5,"deadline":1},{"id":"short","name":"short","minutes":1,"deadline":9}]' | /tmp/essential-errands --compare --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert r['comparison']['edf']['max_lateness']==4 and r['comparison']['shortest']['average_wait']==0.5
+PY
+if printf '[]' | /tmp/essential-errands --compare --order shortest - >/dev/null 2>&1; then exit 1; fi
+if printf '[]' | /tmp/essential-errands --compare --csv - >/dev/null 2>&1; then exit 1; fi
+large=$(python3 -c 'import json; print(json.dumps([{"id":f"e{i}","name":f"errand {i}","minutes":i%4,"deadline":1000-i,"release":i%3,"priority":i%10} for i in range(100)]))'); json=$(printf '%s' "$large" | /tmp/essential-errands --compare --skip e0 --skip e0 --until 1000 --break-after 20 --break-for 2 --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert set(r['comparison'])=={'edf','shortest'}
+assert all('scheduled' in r['comparison'][p] and 'average_wait' in r['comparison'][p] for p in r['comparison'])
+PY
 echo 'Objective-C CLI tests: EDF, stable ties, malformed input passed'

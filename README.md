@@ -20,3 +20,5 @@ Optional app-stage scheduling controls are `--start N` (an initial clock offset)
 `--csv` emits RFC 4180-compatible rows with CRLF records and the header `kind,id,name,start,finish,lateness`. It includes errand, idle, break, skipped, and deferred rows; fields are quoted and embedded quotes are doubled, so names containing commas, quotes, or newlines remain parseable.
 
 `--stats` appends a text-only `STATS` footer with scheduled, deferred, and skipped counts; service, break, idle, and finish totals; maximum lateness; deadline misses; and average wait after release for scheduled errands. It cannot be combined with `--csv`. JSON always includes the same aggregate fields, while an empty schedule reports zero average wait.
+
+`--compare` runs the same input and scheduling constraints through both `edf` and `shortest`, then prints side-by-side scheduled count, deadline misses, maximum lateness, finish, and average wait metrics. Add `--json` for a structured comparison object. It cannot be combined with an explicit `--order` or `--csv`; `--stats` is accepted but redundant. The comparison reports observed metrics and makes no optimality claim.
