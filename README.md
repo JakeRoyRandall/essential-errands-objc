@@ -12,3 +12,5 @@ sh test.sh
 ```
 
 The bounded core accepts at most 100 unique errands, with nonnegative integer minutes and deadlines up to 1,000,000. It validates JSON types and rejects malformed input. Names and IDs are printed as TSV fields; this first stage does not implement CSV escaping, priorities, breaks, or real-world routing.
+
+Optional app-stage scheduling controls are `--start N` (an initial clock offset) and the paired `--break-after N --break-for N`. When cumulative service reaches the threshold between errands, the tool inserts a distinct `BREAK` TSV row; a break is never added after the final errand. These options are bounded to 0–1,000,000 minutes, with a positive break duration, and the default output remains unchanged.
