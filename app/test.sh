@@ -17,4 +17,14 @@ if printf '[]' | /tmp/essential-errands --break-after 0 --break-for 1 - >/dev/nu
 if printf '[]' | /tmp/essential-errands --break-after 1 - >/dev/null 2>&1; then exit 1; fi
 if printf '[]' | /tmp/essential-errands - - >/dev/null 2>&1; then exit 1; fi
 if printf '[]' | /tmp/essential-errands --start huge - >/dev/null 2>&1; then exit 1; fi
+json=$(printf '[{"id":"é","name":"café-run","minutes":2,"deadline":9}]' | /tmp/essential-errands --json -)
+JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert r['schema_version']==1 and len(r['events'])==1
+assert r['events'][0]['id']=='é' and r['events'][0]['name']=='café-run'
+assert r['total_service']==2 and r['finish']==2 and r['max_lateness']==0
+PY
+json=$(printf '[]' | /tmp/essential-errands --json -); JSON_RESULT="$json" python3 -c 'import json,os; r=json.loads(os.environ["JSON_RESULT"]); assert r["events"]==[] and r["finish"]==0'
+if printf '[]' | /tmp/essential-errands --json --break-after 1 - >/dev/null 2>&1; then exit 1; fi
 echo 'Objective-C CLI tests: EDF, stable ties, malformed input passed'
