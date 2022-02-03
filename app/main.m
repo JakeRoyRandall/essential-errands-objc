@@ -36,7 +36,7 @@ static NSData *ReadInput(NSString *path) {
 }
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        NSString *inputPath = @"-", *startingID = nil; NSMutableArray *skipIDs = [NSMutableArray array]; BOOL hasInput = NO, jsonOutput = NO, csvOutput = NO, hasUntil = NO; long long startOffset = 0, breakAfter = 0, breakFor = 0, until = 0; BOOL hasBreakAfter = NO, hasBreakFor = NO;
+        NSString *inputPath = @"-", *startingID = nil; NSMutableArray *skipIDs = [NSMutableArray array]; BOOL hasInput = NO, jsonOutput = NO, csvOutput = NO, statsOutput = NO, hasUntil = NO; long long startOffset = 0, breakAfter = 0, breakFor = 0, until = 0; BOOL hasBreakAfter = NO, hasBreakFor = NO;
         for (int i = 1; i < argc; i++) { NSString *arg = [NSString stringWithUTF8String:argv[i]];
             if ([arg isEqualToString:@"--from"]) {
                 if (++i >= argc) Fail(@"--from requires an errand id");
@@ -56,9 +56,11 @@ int main(int argc, const char *argv[]) {
                 if ([arg isEqualToString:@"--start"]) startOffset = number; else if ([arg isEqualToString:@"--break-after"]) { breakAfter = number; hasBreakAfter = YES; } else { breakFor = number; hasBreakFor = YES; }
             } else if ([arg isEqualToString:@"--json"]) jsonOutput = YES;
             else if ([arg isEqualToString:@"--csv"]) csvOutput = YES;
+            else if ([arg isEqualToString:@"--stats"]) statsOutput = YES;
             else if ([arg hasPrefix:@"-"] && ![arg isEqualToString:@"-"]) Fail(@"unknown option"); else if (hasInput) Fail(@"only one input file is allowed"); else { inputPath = arg; hasInput = YES; }
         }
         if (jsonOutput && csvOutput) Fail(@"--json and --csv are mutually exclusive");
+        if (csvOutput && statsOutput) Fail(@"--stats cannot be combined with --csv");
         if (hasBreakAfter != hasBreakFor) Fail(@"--break-after and --break-for must be paired");
         NSData *data = ReadInput(inputPath); NSError *error = nil;
         id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
@@ -81,7 +83,7 @@ int main(int argc, const char *argv[]) {
         if (startingID && [tasks indexOfObjectPassingTest:^BOOL(NSDictionary *task, NSUInteger idx, BOOL *stop) { return [task[@"id"] isEqualToString:startingID]; }] == NSNotFound) Fail(@"--from id was not found in input");
         if (hasUntil && startOffset > until) Fail(@"--start cannot be after --until");
         if (csvOutput) PrintCSVRow(@[@"kind", @"id", @"name", @"start", @"finish", @"lateness"]); else if (!jsonOutput) printf("id\tname\tstart\tfinish\tlateness\n");
-        NSMutableArray *events = [NSMutableArray array]; NSMutableArray *remaining = [tasks mutableCopy]; NSMutableArray *deferred = [NSMutableArray array]; long long clock = startOffset, sinceBreak = 0, totalService = 0, totalBreak = 0, totalIdle = 0, maxLate = 0; BOOL firstStop = YES;
+        NSMutableArray *events = [NSMutableArray array]; NSMutableArray *remaining = [tasks mutableCopy]; NSMutableArray *deferred = [NSMutableArray array]; long long clock = startOffset, sinceBreak = 0, totalService = 0, totalBreak = 0, totalIdle = 0, totalWait = 0, maxLate = 0, deadlineMisses = 0; BOOL firstStop = YES;
         while (remaining.count > 0) {
             if (!firstStop && hasBreakAfter && sinceBreak >= breakAfter) {
                 if (hasUntil && clock + breakFor > until) { [deferred addObjectsFromArray:[remaining valueForKey:@"id"]]; [remaining removeAllObjects]; break; }
@@ -106,11 +108,14 @@ int main(int argc, const char *argv[]) {
             }
             NSDictionary *task = remaining[selected]; [remaining removeObjectAtIndex:selected];
             long long release = [task[@"release"] longLongValue]; if (clock < release) { if (csvOutput) PrintCSVRow(@[@"idle", @"", @"idle", [NSString stringWithFormat:@"%lld", clock], [NSString stringWithFormat:@"%lld", release], @"0"]); else if (!jsonOutput) printf("IDLE\tidle\t%lld\t%lld\t0\n", clock, release); else [events addObject:@{ @"kind": @"idle", @"start": @(clock), @"finish": @(release), @"lateness": @0 }]; totalIdle += release - clock; clock = release; }
-            long long start = clock; long long service = [task[@"minutes"] longLongValue]; clock += service; totalService += service; sinceBreak += service; long long finish = clock; long long late = MAX(0, finish - [task[@"deadline"] longLongValue]); maxLate = MAX(maxLate, late); if (csvOutput) PrintCSVRow(@[@"errand", task[@"id"], task[@"name"], [NSString stringWithFormat:@"%lld", start], [NSString stringWithFormat:@"%lld", finish], [NSString stringWithFormat:@"%lld", late]]); else if (!jsonOutput) printf("%s\t%s\t%lld\t%lld\t%lld\n", [task[@"id"] UTF8String], [task[@"name"] UTF8String], start, finish, late); else [events addObject:@{ @"kind": @"errand", @"id": task[@"id"], @"name": task[@"name"], @"release": @(release), @"priority": task[@"priority"], @"start": @(start), @"finish": @(finish), @"lateness": @(late) }]; firstStop = NO;
+            long long start = clock; long long service = [task[@"minutes"] longLongValue]; clock += service; totalService += service; sinceBreak += service; totalWait += start - release; long long finish = clock; long long late = MAX(0, finish - [task[@"deadline"] longLongValue]); maxLate = MAX(maxLate, late); if (late > 0) deadlineMisses++; if (csvOutput) PrintCSVRow(@[@"errand", task[@"id"], task[@"name"], [NSString stringWithFormat:@"%lld", start], [NSString stringWithFormat:@"%lld", finish], [NSString stringWithFormat:@"%lld", late]]); else if (!jsonOutput) printf("%s\t%s\t%lld\t%lld\t%lld\n", [task[@"id"] UTF8String], [task[@"name"] UTF8String], start, finish, late); else [events addObject:@{ @"kind": @"errand", @"id": task[@"id"], @"name": task[@"name"], @"release": @(release), @"priority": task[@"priority"], @"start": @(start), @"finish": @(finish), @"lateness": @(late) }]; firstStop = NO;
         }
         if (csvOutput) for (NSString *taskID in skipped) PrintCSVRow(@[@"skipped", taskID, @"", @"", @"", @""]); else if (!jsonOutput) for (NSString *taskID in skipped) printf("SKIPPED\t%s\n", taskID.UTF8String);
         if (csvOutput) for (NSString *taskID in deferred) PrintCSVRow(@[@"deferred", taskID, @"", @"", @"", @""]); else if (!jsonOutput) for (NSString *taskID in deferred) printf("DEFERRED\t%s\n", taskID.UTF8String);
-        if (jsonOutput) { NSMutableDictionary *result = [@{ @"schema_version": @1, @"start": @(startOffset), @"events": events, @"total_service": @(totalService), @"total_break_time": @(totalBreak), @"total_idle_time": @(totalIdle), @"finish": @(clock), @"max_lateness": @(maxLate), @"skipped": skipped, @"deferred": deferred } mutableCopy]; if (hasUntil) result[@"until"] = @(until); NSError *jsonError = nil; NSData *output = [NSJSONSerialization dataWithJSONObject:result options:0 error:&jsonError]; if (!output || jsonError || fwrite(output.bytes, 1, output.length, stdout) != output.length || putchar('\n') == EOF) Fail(@"cannot write JSON output"); }
+        NSUInteger scheduledCount = tasks.count - remaining.count - deferred.count;
+        double averageWait = scheduledCount == 0 ? 0.0 : (double)totalWait / (double)scheduledCount;
+        if (!jsonOutput && statsOutput) printf("STATS\tscheduled=%lu\tdeferred=%lu\tskipped=%lu\tservice=%lld\tbreak=%lld\tidle=%lld\tfinish=%lld\tmax-lateness=%lld\tdeadline-misses=%lld\taverage-wait-after-release=%.3f\n", (unsigned long)scheduledCount, (unsigned long)deferred.count, (unsigned long)skipped.count, totalService, totalBreak, totalIdle, clock, maxLate, deadlineMisses, averageWait);
+        if (jsonOutput) { NSMutableDictionary *result = [@{ @"schema_version": @1, @"start": @(startOffset), @"events": events, @"total_service": @(totalService), @"total_break_time": @(totalBreak), @"total_idle_time": @(totalIdle), @"finish": @(clock), @"max_lateness": @(maxLate), @"deadline_misses": @(deadlineMisses), @"scheduled_count": @(scheduledCount), @"deferred_count": @(deferred.count), @"skipped_count": @(skipped.count), @"average_wait_after_release": @(averageWait), @"skipped": skipped, @"deferred": deferred } mutableCopy]; if (hasUntil) result[@"until"] = @(until); NSError *jsonError = nil; NSData *output = [NSJSONSerialization dataWithJSONObject:result options:0 error:&jsonError]; if (!output || jsonError || fwrite(output.bytes, 1, output.length, stdout) != output.length || putchar('\n') == EOF) Fail(@"cannot write JSON output"); }
     }
     return 0;
 }

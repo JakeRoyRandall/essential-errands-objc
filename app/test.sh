@@ -85,4 +85,18 @@ assert rows[1][2]=='tea, "green"' and rows[4][2]=='café'
 assert rows[5][1]=='skip' and rows[6][1]=='defer'
 PY
 if printf '[]' | /tmp/essential-errands --json --csv - >/dev/null 2>&1; then exit 1; fi
+stats=$(printf '%s' '[{"id":"b","name":"b","minutes":1,"deadline":9},{"id":"a","name":"a","minutes":1,"deadline":1,"release":0},{"id":"skip","name":"skip","minutes":1,"deadline":9},{"id":"defer","name":"defer","minutes":5,"deadline":9,"release":2}]' | /tmp/essential-errands --skip skip --until 3 --break-after 1 --break-for 1 --stats -); expected_stats=$(printf 'STATS\tscheduled=2\tdeferred=1\tskipped=1\tservice=2\tbreak=1\tidle=0\tfinish=3\tmax-lateness=0\tdeadline-misses=0\taverage-wait-after-release=1.000'); test "$(printf '%s\n' "$stats" | tail -1)" = "$expected_stats"
+json=$(printf '%s' '[{"id":"b","name":"b","minutes":1,"deadline":9},{"id":"a","name":"a","minutes":1,"deadline":1,"release":0},{"id":"skip","name":"skip","minutes":1,"deadline":9},{"id":"defer","name":"defer","minutes":5,"deadline":9,"release":2}]' | /tmp/essential-errands --skip skip --until 3 --break-after 1 --break-for 1 --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert (r['scheduled_count'],r['deferred_count'],r['skipped_count'])==(2,1,1)
+assert (r['total_service'],r['total_break_time'],r['total_idle_time'],r['finish'])==(2,1,0,3)
+assert r['average_wait_after_release']==1.0 and r['deadline_misses']==0
+PY
+json=$(printf '[]' | /tmp/essential-errands --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert r['scheduled_count']==r['deferred_count']==r['skipped_count']==0 and r['average_wait_after_release']==0.0
+PY
+if printf '[]' | /tmp/essential-errands --csv --stats - >/dev/null 2>&1; then exit 1; fi
 echo 'Objective-C CLI tests: EDF, stable ties, malformed input passed'
