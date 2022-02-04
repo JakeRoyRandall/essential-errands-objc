@@ -9,6 +9,12 @@ for bad in '[{"id":"x","name":"x","minutes":-1,"deadline":1}]' '[{"id":"x","name
 same=$(printf '[{"id":"a","name":"a","minutes":1,"deadline":5},{"id":"b","name":"b","minutes":2,"deadline":5}]' | /tmp/essential-errands -); test "$(printf '%s\n' "$same" | sed -n '2p' | cut -f1)" = a; test "$(printf '%s\n' "$same" | sed -n '3p' | cut -f1)" = b
 priority=$(printf '[{"id":"deadline","name":"deadline","minutes":1,"deadline":1,"priority":0},{"id":"high","name":"high","minutes":1,"deadline":2,"priority":9},{"id":"tie-low","name":"tie-low","minutes":1,"deadline":3,"priority":1},{"id":"tie-high","name":"tie-high","minutes":1,"deadline":3,"priority":2},{"id":"tie-equal","name":"tie-equal","minutes":1,"deadline":3,"priority":2}]' | /tmp/essential-errands -); test "$(printf '%s\n' "$priority" | sed -n '2p' | cut -f1)" = deadline; test "$(printf '%s\n' "$priority" | sed -n '3p' | cut -f1)" = high; test "$(printf '%s\n' "$priority" | sed -n '4p' | cut -f1)" = tie-high; test "$(printf '%s\n' "$priority" | sed -n '5p' | cut -f1)" = tie-equal; test "$(printf '%s\n' "$priority" | sed -n '6p' | cut -f1)" = tie-low
 for bad_priority in '[{"id":"x","name":"x","minutes":1,"deadline":1,"priority":-1}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"priority":10}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"priority":1.5}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"priority":true}]'; do if printf '%s' "$bad_priority" | /tmp/essential-errands - >/dev/null 2>&1; then exit 1; fi; done
+policy=$(printf '%s' '[{"id":"long","name":"long","minutes":5,"deadline":1},{"id":"short","name":"short","minutes":1,"deadline":9}]' | /tmp/essential-errands --order shortest -); test "$(printf '%s\n' "$policy" | sed -n '2p' | cut -f1)" = short
+deadline=$(printf '%s' '[{"id":"urgent","name":"urgent","minutes":5,"deadline":1},{"id":"quick","name":"quick","minutes":1,"deadline":9,"priority":9}]' | /tmp/essential-errands --order shortest -); test "$(printf '%s\n' "$deadline" | sed -n '2p' | cut -f1)" = quick
+tie=$(printf '%s' '[{"id":"low","name":"low","minutes":2,"deadline":5,"priority":1},{"id":"high","name":"high","minutes":2,"deadline":5,"priority":8}]' | /tmp/essential-errands --order shortest -); test "$(printf '%s\n' "$tie" | sed -n '2p' | cut -f1)" = high
+available=$(printf '%s' '[{"id":"now","name":"now","minutes":3,"deadline":9},{"id":"later","name":"later","minutes":1,"deadline":9,"release":5}]' | /tmp/essential-errands --order shortest -); test "$(printf '%s\n' "$available" | sed -n '2p' | cut -f1)" = now
+bounded=$(printf '%s' '[{"id":"long","name":"long","minutes":5,"deadline":1},{"id":"short","name":"short","minutes":2,"deadline":9}]' | /tmp/essential-errands --order shortest --until 2 -); test "$(printf '%s\n' "$bounded" | sed -n '2p' | cut -f1)" = short
+if printf '[]' | /tmp/essential-errands --order random - >/dev/null 2>&1; then exit 1; fi
 skipped=$(printf '[{"id":"early","name":"early","minutes":1,"deadline":1},{"id":"later","name":"later","minutes":1,"deadline":9},{"id":"last","name":"last","minutes":1,"deadline":10}]' | /tmp/essential-errands --skip early --skip later --skip later -); test "$(printf '%s\n' "$skipped" | sed -n '2p' | cut -f1)" = last; test "$(printf '%s\n' "$skipped" | sed -n '3p' | cut -f1)" = SKIPPED; test "$(printf '%s\n' "$skipped" | sed -n '4p' | cut -f1)" = SKIPPED; test "$(printf '%s\n' "$skipped" | grep -c '^IDLE\|^BREAK')" -eq 0
 if printf '[{"id":"x","name":"x","minutes":1,"deadline":1}]' | /tmp/essential-errands --skip missing - >/dev/null 2>&1; then exit 1; fi
 if printf '[{"id":"x","name":"x","minutes":1,"deadline":1}]' | /tmp/essential-errands --from x --skip x - >/dev/null 2>&1; then exit 1; fi
@@ -45,6 +51,10 @@ json=$(printf '[{"id":"high","name":"high","minutes":1,"deadline":5,"priority":7
 import json, os
 r=json.loads(os.environ['JSON_RESULT'])
 assert r['events'][0]['priority']==7
+PY
+json=$(printf '[{"id":"a","name":"a","minutes":1,"deadline":5}]' | /tmp/essential-errands --order shortest --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+assert json.loads(os.environ['JSON_RESULT'])['order']=='shortest'
 PY
 json=$(printf '[{"id":"skip","name":"skip","minutes":1,"deadline":1},{"id":"go","name":"go","minutes":1,"deadline":9}]' | /tmp/essential-errands --skip skip --json -); JSON_RESULT="$json" python3 - <<'PY'
 import json, os

@@ -36,7 +36,7 @@ static NSData *ReadInput(NSString *path) {
 }
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        NSString *inputPath = @"-", *startingID = nil; NSMutableArray *skipIDs = [NSMutableArray array]; BOOL hasInput = NO, jsonOutput = NO, csvOutput = NO, statsOutput = NO, hasUntil = NO; long long startOffset = 0, breakAfter = 0, breakFor = 0, until = 0; BOOL hasBreakAfter = NO, hasBreakFor = NO;
+        NSString *inputPath = @"-", *startingID = nil, *orderMode = @"edf"; NSMutableArray *skipIDs = [NSMutableArray array]; BOOL hasInput = NO, jsonOutput = NO, csvOutput = NO, statsOutput = NO, hasUntil = NO; long long startOffset = 0, breakAfter = 0, breakFor = 0, until = 0; BOOL hasBreakAfter = NO, hasBreakFor = NO;
         for (int i = 1; i < argc; i++) { NSString *arg = [NSString stringWithUTF8String:argv[i]];
             if ([arg isEqualToString:@"--from"]) {
                 if (++i >= argc) Fail(@"--from requires an errand id");
@@ -57,6 +57,10 @@ int main(int argc, const char *argv[]) {
             } else if ([arg isEqualToString:@"--json"]) jsonOutput = YES;
             else if ([arg isEqualToString:@"--csv"]) csvOutput = YES;
             else if ([arg isEqualToString:@"--stats"]) statsOutput = YES;
+            else if ([arg isEqualToString:@"--order"]) {
+                if (++i >= argc) Fail(@"--order requires edf or shortest"); orderMode = [NSString stringWithUTF8String:argv[i]];
+                if (![orderMode isEqualToString:@"edf"] && ![orderMode isEqualToString:@"shortest"]) Fail(@"--order must be edf or shortest");
+            }
             else if ([arg hasPrefix:@"-"] && ![arg isEqualToString:@"-"]) Fail(@"unknown option"); else if (hasInput) Fail(@"only one input file is allowed"); else { inputPath = arg; hasInput = YES; }
         }
         if (jsonOutput && csvOutput) Fail(@"--json and --csv are mutually exclusive");
@@ -79,7 +83,7 @@ int main(int argc, const char *argv[]) {
         NSMutableArray *skipped = [NSMutableArray array]; NSMutableArray *planned = [NSMutableArray array];
         for (NSDictionary *task in tasks) { if ([skipIDs containsObject:task[@"id"]]) [skipped addObject:task[@"id"]]; else [planned addObject:task]; }
         tasks = planned;
-        [tasks sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { NSComparisonResult result = [a[@"deadline"] compare:b[@"deadline"]]; if (result != NSOrderedSame) return result; result = [b[@"priority"] compare:a[@"priority"]]; return result == NSOrderedSame ? [a[@"order"] compare:b[@"order"]] : result; }];
+        [tasks sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { NSComparisonResult result = [orderMode isEqualToString:@"shortest"] ? [a[@"minutes"] compare:b[@"minutes"]] : [a[@"deadline"] compare:b[@"deadline"]]; if (result != NSOrderedSame) return result; if ([orderMode isEqualToString:@"shortest"]) { result = [a[@"deadline"] compare:b[@"deadline"]]; if (result != NSOrderedSame) return result; } result = [b[@"priority"] compare:a[@"priority"]]; return result == NSOrderedSame ? [a[@"order"] compare:b[@"order"]] : result; }];
         if (startingID && [tasks indexOfObjectPassingTest:^BOOL(NSDictionary *task, NSUInteger idx, BOOL *stop) { return [task[@"id"] isEqualToString:startingID]; }] == NSNotFound) Fail(@"--from id was not found in input");
         if (hasUntil && startOffset > until) Fail(@"--start cannot be after --until");
         if (csvOutput) PrintCSVRow(@[@"kind", @"id", @"name", @"start", @"finish", @"lateness"]); else if (!jsonOutput) printf("id\tname\tstart\tfinish\tlateness\n");
@@ -115,7 +119,7 @@ int main(int argc, const char *argv[]) {
         NSUInteger scheduledCount = tasks.count - remaining.count - deferred.count;
         double averageWait = scheduledCount == 0 ? 0.0 : (double)totalWait / (double)scheduledCount;
         if (!jsonOutput && statsOutput) printf("STATS\tscheduled=%lu\tdeferred=%lu\tskipped=%lu\tservice=%lld\tbreak=%lld\tidle=%lld\tfinish=%lld\tmax-lateness=%lld\tdeadline-misses=%lld\taverage-wait-after-release=%.3f\n", (unsigned long)scheduledCount, (unsigned long)deferred.count, (unsigned long)skipped.count, totalService, totalBreak, totalIdle, clock, maxLate, deadlineMisses, averageWait);
-        if (jsonOutput) { NSMutableDictionary *result = [@{ @"schema_version": @1, @"start": @(startOffset), @"events": events, @"total_service": @(totalService), @"total_break_time": @(totalBreak), @"total_idle_time": @(totalIdle), @"finish": @(clock), @"max_lateness": @(maxLate), @"deadline_misses": @(deadlineMisses), @"scheduled_count": @(scheduledCount), @"deferred_count": @(deferred.count), @"skipped_count": @(skipped.count), @"average_wait_after_release": @(averageWait), @"skipped": skipped, @"deferred": deferred } mutableCopy]; if (hasUntil) result[@"until"] = @(until); NSError *jsonError = nil; NSData *output = [NSJSONSerialization dataWithJSONObject:result options:0 error:&jsonError]; if (!output || jsonError || fwrite(output.bytes, 1, output.length, stdout) != output.length || putchar('\n') == EOF) Fail(@"cannot write JSON output"); }
+        if (jsonOutput) { NSMutableDictionary *result = [@{ @"schema_version": @1, @"order": orderMode, @"start": @(startOffset), @"events": events, @"total_service": @(totalService), @"total_break_time": @(totalBreak), @"total_idle_time": @(totalIdle), @"finish": @(clock), @"max_lateness": @(maxLate), @"deadline_misses": @(deadlineMisses), @"scheduled_count": @(scheduledCount), @"deferred_count": @(deferred.count), @"skipped_count": @(skipped.count), @"average_wait_after_release": @(averageWait), @"skipped": skipped, @"deferred": deferred } mutableCopy]; if (hasUntil) result[@"until"] = @(until); NSError *jsonError = nil; NSData *output = [NSJSONSerialization dataWithJSONObject:result options:0 error:&jsonError]; if (!output || jsonError || fwrite(output.bytes, 1, output.length, stdout) != output.length || putchar('\n') == EOF) Fail(@"cannot write JSON output"); }
     }
     return 0;
 }
