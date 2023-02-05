@@ -28,12 +28,15 @@ static NSData *ReadInput(NSString *path) {
 }
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        NSString *inputPath = @"-", *startingID = nil; BOOL hasInput = NO, jsonOutput = NO; long long startOffset = 0, breakAfter = 0, breakFor = 0; BOOL hasBreakAfter = NO, hasBreakFor = NO;
+        NSString *inputPath = @"-", *startingID = nil; BOOL hasInput = NO, jsonOutput = NO, hasUntil = NO; long long startOffset = 0, breakAfter = 0, breakFor = 0, until = 0; BOOL hasBreakAfter = NO, hasBreakFor = NO;
         for (int i = 1; i < argc; i++) { NSString *arg = [NSString stringWithUTF8String:argv[i]];
             if ([arg isEqualToString:@"--from"]) {
                 if (++i >= argc) Fail(@"--from requires an errand id");
                 startingID = [NSString stringWithUTF8String:argv[i]];
                 if (startingID.length == 0) Fail(@"--from requires an errand id");
+            } else if ([arg isEqualToString:@"--until"]) {
+                if (++i >= argc) Fail(@"--until requires an integer value"); NSString *value = [NSString stringWithUTF8String:argv[i]]; NSScanner *scanner = [NSScanner scannerWithString:value];
+                if (![scanner scanLongLong:&until] || !scanner.isAtEnd || until < 0 || until > 1000000) Fail(@"--until value is out of bounds"); hasUntil = YES;
             } else if ([arg isEqualToString:@"--start"] || [arg isEqualToString:@"--break-after"] || [arg isEqualToString:@"--break-for"]) {
                 if (++i >= argc) Fail(@"option requires an integer value"); NSString *value = [NSString stringWithUTF8String:argv[i]]; NSScanner *scanner = [NSScanner scannerWithString:value]; long long number = 0;
                 if (![scanner scanLongLong:&number] || !scanner.isAtEnd || number < 0 || number > 1000000 || ([arg isEqualToString:@"--break-after"] && number == 0) || ([arg isEqualToString:@"--break-for"] && number == 0)) Fail(@"option value is out of bounds");
@@ -56,20 +59,28 @@ int main(int argc, const char *argv[]) {
         }
         [tasks sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { NSComparisonResult result = [a[@"deadline"] compare:b[@"deadline"]]; return result == NSOrderedSame ? [a[@"order"] compare:b[@"order"]] : result; }];
         if (startingID && [tasks indexOfObjectPassingTest:^BOOL(NSDictionary *task, NSUInteger idx, BOOL *stop) { return [task[@"id"] isEqualToString:startingID]; }] == NSNotFound) Fail(@"--from id was not found in input");
+        if (hasUntil && startOffset > until) Fail(@"--start cannot be after --until");
         if (!jsonOutput) printf("id\tname\tstart\tfinish\tlateness\n");
-        NSMutableArray *events = [NSMutableArray array]; NSMutableArray *remaining = [tasks mutableCopy]; long long clock = startOffset, sinceBreak = 0, totalService = 0, totalBreak = 0, totalIdle = 0, maxLate = 0; BOOL firstStop = YES;
+        NSMutableArray *events = [NSMutableArray array]; NSMutableArray *remaining = [tasks mutableCopy]; NSMutableArray *deferred = [NSMutableArray array]; long long clock = startOffset, sinceBreak = 0, totalService = 0, totalBreak = 0, totalIdle = 0, maxLate = 0; BOOL firstStop = YES;
         while (remaining.count > 0) {
             if (!firstStop && hasBreakAfter && sinceBreak >= breakAfter) {
+                if (hasUntil && clock + breakFor > until) { [deferred addObjectsFromArray:[remaining valueForKey:@"id"]]; [remaining removeAllObjects]; break; }
                 long long breakEnd = clock + breakFor;
                 if (!jsonOutput) printf("BREAK\tbreak\t%lld\t%lld\t0\n", clock, breakEnd); else [events addObject:@{ @"kind": @"break", @"start": @(clock), @"finish": @(breakEnd), @"lateness": @0 }];
                 clock = breakEnd; totalBreak += breakFor; sinceBreak = 0;
             }
             NSUInteger selected = NSNotFound;
             if (firstStop && startingID) selected = [remaining indexOfObjectPassingTest:^BOOL(NSDictionary *task, NSUInteger idx, BOOL *stop) { return [task[@"id"] isEqualToString:startingID]; }];
-            else selected = [remaining indexOfObjectPassingTest:^BOOL(NSDictionary *task, NSUInteger idx, BOOL *stop) { return [task[@"release"] longLongValue] <= clock; }];
+            else selected = [remaining indexOfObjectPassingTest:^BOOL(NSDictionary *task, NSUInteger idx, BOOL *stop) { return [task[@"release"] longLongValue] <= clock && (!hasUntil || clock + [task[@"minutes"] longLongValue] <= until); }];
+            if (firstStop && startingID && selected != NSNotFound && hasUntil) {
+                long long forcedRelease = [remaining[selected][@"release"] longLongValue];
+                long long forcedStart = MAX(clock, forcedRelease);
+                if (forcedStart + [remaining[selected][@"minutes"] longLongValue] > until) Fail(@"--from errand cannot finish by --until");
+            }
             if (selected == NSNotFound) {
                 long long nextRelease = LLONG_MAX;
-                for (NSDictionary *candidate in remaining) nextRelease = MIN(nextRelease, [candidate[@"release"] longLongValue]);
+                for (NSDictionary *candidate in remaining) if ([candidate[@"release"] longLongValue] > clock) nextRelease = MIN(nextRelease, [candidate[@"release"] longLongValue]);
+                if (hasUntil && (nextRelease == LLONG_MAX || nextRelease > until)) { [deferred addObjectsFromArray:[remaining valueForKey:@"id"]]; [remaining removeAllObjects]; break; }
                 if (!jsonOutput) printf("IDLE\tidle\t%lld\t%lld\t0\n", clock, nextRelease); else [events addObject:@{ @"kind": @"idle", @"start": @(clock), @"finish": @(nextRelease), @"lateness": @0 }];
                 totalIdle += nextRelease - clock; clock = nextRelease; continue;
             }
@@ -77,7 +88,8 @@ int main(int argc, const char *argv[]) {
             long long release = [task[@"release"] longLongValue]; if (clock < release) { if (!jsonOutput) printf("IDLE\tidle\t%lld\t%lld\t0\n", clock, release); else [events addObject:@{ @"kind": @"idle", @"start": @(clock), @"finish": @(release), @"lateness": @0 }]; totalIdle += release - clock; clock = release; }
             long long start = clock; long long service = [task[@"minutes"] longLongValue]; clock += service; totalService += service; sinceBreak += service; long long finish = clock; long long late = MAX(0, finish - [task[@"deadline"] longLongValue]); maxLate = MAX(maxLate, late); if (!jsonOutput) printf("%s\t%s\t%lld\t%lld\t%lld\n", [task[@"id"] UTF8String], [task[@"name"] UTF8String], start, finish, late); else [events addObject:@{ @"kind": @"errand", @"id": task[@"id"], @"name": task[@"name"], @"release": @(release), @"start": @(start), @"finish": @(finish), @"lateness": @(late) }]; firstStop = NO;
         }
-        if (jsonOutput) { NSDictionary *result = @{ @"schema_version": @1, @"start": @(startOffset), @"events": events, @"total_service": @(totalService), @"total_break_time": @(totalBreak), @"total_idle_time": @(totalIdle), @"finish": @(clock), @"max_lateness": @(maxLate) }; NSError *jsonError = nil; NSData *output = [NSJSONSerialization dataWithJSONObject:result options:0 error:&jsonError]; if (!output || jsonError || fwrite(output.bytes, 1, output.length, stdout) != output.length || putchar('\n') == EOF) Fail(@"cannot write JSON output"); }
+        if (!jsonOutput) for (NSString *taskID in deferred) printf("DEFERRED\t%s\n", taskID.UTF8String);
+        if (jsonOutput) { NSMutableDictionary *result = [@{ @"schema_version": @1, @"start": @(startOffset), @"events": events, @"total_service": @(totalService), @"total_break_time": @(totalBreak), @"total_idle_time": @(totalIdle), @"finish": @(clock), @"max_lateness": @(maxLate), @"deferred": deferred } mutableCopy]; if (hasUntil) result[@"until"] = @(until); NSError *jsonError = nil; NSData *output = [NSJSONSerialization dataWithJSONObject:result options:0 error:&jsonError]; if (!output || jsonError || fwrite(output.bytes, 1, output.length, stdout) != output.length || putchar('\n') == EOF) Fail(@"cannot write JSON output"); }
     }
     return 0;
 }

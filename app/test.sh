@@ -13,6 +13,11 @@ released=$(printf '[{"id":"late","name":"late","minutes":1,"deadline":2,"release
 from_release=$(printf '[{"id":"early","name":"early","minutes":1,"deadline":1},{"id":"future","name":"future","minutes":1,"deadline":99,"release":7}]' | /tmp/essential-errands --from future -); test "$(printf '%s\n' "$from_release" | sed -n '2p' | cut -f1)" = IDLE; test "$(printf '%s\n' "$from_release" | sed -n '3p' | cut -f1)" = future; test "$(printf '%s\n' "$from_release" | sed -n '4p' | cut -f1)" = early
 interplay=$(printf '[{"id":"a","name":"a","minutes":1,"deadline":9,"release":3},{"id":"b","name":"b","minutes":1,"deadline":9}]' | /tmp/essential-errands --from a --break-after 1 --break-for 2 -); test "$(printf '%s\n' "$interplay" | sed -n '2p' | cut -f1)" = IDLE; test "$(printf '%s\n' "$interplay" | sed -n '3p' | cut -f1)" = a; test "$(printf '%s\n' "$interplay" | sed -n '4p' | cut -f1)" = BREAK; test "$(printf '%s\n' "$interplay" | sed -n '5p' | cut -f1)" = b
 for bad_release in '[{"id":"x","name":"x","minutes":1,"deadline":1,"release":-1}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"release":1000001}]' '[{"id":"x","name":"x","minutes":1,"deadline":1,"release":"2"}]'; do if printf '%s' "$bad_release" | /tmp/essential-errands - >/dev/null 2>&1; then exit 1; fi; done
+exact=$(printf '[{"id":"fit","name":"fit","minutes":3,"deadline":9},{"id":"too-long","name":"too-long","minutes":1,"deadline":9}]' | /tmp/essential-errands --until 3 -); test "$(printf '%s\n' "$exact" | sed -n '2p' | cut -f1)" = fit; test "$(printf '%s\n' "$exact" | sed -n '3p' | cut -f1)" = DEFERRED
+short=$(printf '[{"id":"long","name":"long","minutes":5,"deadline":1},{"id":"short","name":"short","minutes":1,"deadline":9}]' | /tmp/essential-errands --until 1 -); test "$(printf '%s\n' "$short" | sed -n '2p' | cut -f1)" = short; test "$(printf '%s\n' "$short" | sed -n '3p' | cut -f1)" = DEFERRED
+idle_cut=$(printf '[{"id":"later","name":"later","minutes":1,"deadline":9,"release":5}]' | /tmp/essential-errands --until 4 -); test "$(printf '%s\n' "$idle_cut" | sed -n '2p' | cut -f1)" = DEFERRED; test "$(printf '%s\n' "$idle_cut" | grep -c '^IDLE')" -eq 0
+break_cut=$(printf '[{"id":"a","name":"a","minutes":2,"deadline":9},{"id":"b","name":"b","minutes":1,"deadline":9}]' | /tmp/essential-errands --until 3 --break-after 1 --break-for 2 -); test "$(printf '%s\n' "$break_cut" | sed -n '2p' | cut -f1)" = a; test "$(printf '%s\n' "$break_cut" | sed -n '3p' | cut -f1)" = DEFERRED; test "$(printf '%s\n' "$break_cut" | grep -c '^BREAK')" -eq 0
+if printf '[{"id":"late","name":"late","minutes":2,"deadline":9,"release":5}]' | /tmp/essential-errands --from late --until 5 - >/dev/null 2>&1; then exit 1; fi
 printf '[{"id":"a","name":"a","minutes":2,"deadline":9},{"id":"b","name":"b","minutes":0,"deadline":9},{"id":"c","name":"c","minutes":1,"deadline":9}]' >"$tmp/file.json"
 /tmp/essential-errands --start 5 --break-after 2 --break-for 4 "$tmp/file.json" >"$tmp/options"
 test "$(sed -n '2p' "$tmp/options" | cut -f1-5)" = 'a	a	5	7	0'
@@ -44,6 +49,12 @@ import json, os
 r=json.loads(os.environ['JSON_RESULT'])
 assert [e['kind'] for e in r['events']]==['idle','errand','errand']
 assert r['events'][0]['start']==0 and r['events'][0]['finish']==7
+assert r['finish']-r['start']==r['total_service']+r['total_break_time']+r['total_idle_time']
+PY
+json=$(printf '[{"id":"fit","name":"fit","minutes":2,"deadline":9},{"id":"defer","name":"defer","minutes":2,"deadline":9}]' | /tmp/essential-errands --until 2 --json -); JSON_RESULT="$json" python3 - <<'PY'
+import json, os
+r=json.loads(os.environ['JSON_RESULT'])
+assert r['until']==2 and r['deferred']==['defer'] and r['finish']==2
 assert r['finish']-r['start']==r['total_service']+r['total_break_time']+r['total_idle_time']
 PY
 json=$(printf '[]' | /tmp/essential-errands --json -); JSON_RESULT="$json" python3 -c 'import json,os; r=json.loads(os.environ["JSON_RESULT"]); assert r["events"]==[] and r["finish"]==0'
