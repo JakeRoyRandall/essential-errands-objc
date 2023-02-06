@@ -74,4 +74,15 @@ assert r['finish']-r['start']==r['total_service']+r['total_break_time']+r['total
 PY
 json=$(printf '[]' | /tmp/essential-errands --json -); JSON_RESULT="$json" python3 -c 'import json,os; r=json.loads(os.environ["JSON_RESULT"]); assert r["events"]==[] and r["finish"]==0'
 if printf '[]' | /tmp/essential-errands --json --break-after 1 - >/dev/null 2>&1; then exit 1; fi
+csv=$(printf '%s' '[{"id":"b","name":"tea, \"green\"","minutes":1,"deadline":9},{"id":"a","name":"café","minutes":1,"deadline":9,"release":3},{"id":"skip","name":"skip","minutes":1,"deadline":9},{"id":"defer","name":"defer","minutes":5,"deadline":9}]' | /tmp/essential-errands --csv --skip skip --until 4 --break-after 1 --break-for 1 -)
+printf '%s' "$csv" | od -An -tx1 | grep -q '0d  *0a'
+CSV_RESULT="$csv" python3 - <<'PY'
+import csv, io, os
+rows=list(csv.reader(io.StringIO(os.environ['CSV_RESULT'])))
+assert rows[0]==['kind','id','name','start','finish','lateness']
+assert [row[0] for row in rows[1:]]==['errand','break','idle','errand','skipped','deferred']
+assert rows[1][2]=='tea, "green"' and rows[4][2]=='café'
+assert rows[5][1]=='skip' and rows[6][1]=='defer'
+PY
+if printf '[]' | /tmp/essential-errands --json --csv - >/dev/null 2>&1; then exit 1; fi
 echo 'Objective-C CLI tests: EDF, stable ties, malformed input passed'
